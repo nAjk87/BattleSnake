@@ -24,6 +24,20 @@ function info() {
     color: "#ff69b4", // TODO: Choose color
     head: "replit-mark",  // TODO: Choose head
     tail: "replit-notmark",  // TODO: Choose tail
+    version: "strategy-a-aggressive"
+  };
+}
+
+function infoV2() {
+  console.log("INFO V2");
+
+  return {
+    apiversion: "1",
+    author: "",
+    color: "#00d4ff",
+    head: "replit-mark",
+    tail: "replit-notmark",
+    version: "strategy-a-v2"
   };
 }
 
@@ -32,9 +46,17 @@ function start(gameState) {
   console.log("GAME START");
 }
 
+function startV2(gameState) {
+  console.log("GAME START V2");
+}
+
 // end is called when your Battlesnake finishes a game
 function end(gameState) {
   console.log("GAME OVER\n");
+}
+
+function endV2(gameState) {
+  console.log("GAME OVER V2\n");
 }
 
 function positionKey(position) {
@@ -262,13 +284,36 @@ function floodFillArea(startPosition, boardWidth, boardHeight, blockedPositions)
   return visited.size;
 }
 
+function aggressiveScore(move, gameState, possibleMoves, areaScores, corridorPenalties) {
+  const nextPosition = possibleMoves[move];
+  const myLength = gameState.you.length;
+  const targets = gameState.board.snakes.filter(snake => {
+    return snake.id !== gameState.you.id && snake.length < myLength;
+  });
+
+  if (targets.length === 0 || areaScores[move] < myLength + 3 || corridorPenalties[move] > 8) {
+    return 0;
+  }
+
+  return targets.reduce((score, snake) => {
+    const currentDistance = distanceBetween(gameState.you.body[0], snake.body[0]);
+    const nextDistance = distanceBetween(nextPosition, snake.body[0]);
+
+    if (nextDistance >= currentDistance) {
+      return score;
+    }
+
+    const lengthAdvantage = myLength - snake.length;
+    const closenessBonus = Math.max(0, 6 - nextDistance);
+
+    return score + closenessBonus + lengthAdvantage;
+  }, 0);
+}
+
 // move is called on every turn and returns your next move
 // Valid moves are "up", "down", "left", or "right"
 // See https://docs.battlesnake.com/api/example-move for available data
-function move(gameState) {
-  console.log("GAME STATE:");
-  console.log(JSON.stringify(gameState, null, 2));
-
+function chooseMove(gameState, options = {}) {
   let isMoveSafe = {
     up: true,
     down: true,
@@ -339,6 +384,7 @@ function move(gameState) {
   const moveScores = {};
   const areaScores = {};
   const corridorPenalties = {};
+  const aggressiveScores = {};
   safeMoves.forEach(move => {
     areaScores[move] = floodFillArea(
       possibleMoves[move],
@@ -352,7 +398,10 @@ function move(gameState) {
       boardHeight,
       blockedPositions
     );
-    moveScores[move] = areaScores[move] - corridorPenalties[move];
+    aggressiveScores[move] = options.aggressive
+      ? aggressiveScore(move, gameState, possibleMoves, areaScores, corridorPenalties)
+      : 0;
+    moveScores[move] = areaScores[move] - corridorPenalties[move] + aggressiveScores[move];
   });
 
   const bestScore = Math.max(...Object.values(moveScores));
@@ -410,13 +459,29 @@ function move(gameState) {
   const nextMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
 
   // TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
-  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)}, area: ${JSON.stringify(areaScores)}, corridor: ${JSON.stringify(corridorPenalties)}, foodMoves: ${JSON.stringify(foodMoves)})`)
+  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)}, area: ${JSON.stringify(areaScores)}, corridor: ${JSON.stringify(corridorPenalties)}, aggro: ${JSON.stringify(aggressiveScores)}, foodMoves: ${JSON.stringify(foodMoves)})`)
   return { move: nextMove };
+}
+
+function move(gameState) {
+  return chooseMove(gameState, { aggressive: true });
+}
+
+function moveV2(gameState) {
+  return chooseMove(gameState, { aggressive: true });
 }
 
 runServer({
   info: info,
   start: start,
   move: move,
-  end: end
+  end: end,
+  variants: {
+    "/v2": {
+      info: infoV2,
+      start: startV2,
+      move: moveV2,
+      end: endV2
+    }
+  }
 });

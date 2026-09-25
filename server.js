@@ -1,25 +1,32 @@
 import express from 'express';
 
-export default function runServer(handlers) {
-  const app = express();
-  app.use(express.json());
-
-  app.get("/", (req, res) => {
+function registerSnakeRoutes(app, basePath, handlers) {
+  app.get(basePath || "/", (req, res) => {
     res.send(handlers.info());
   });
 
-  app.post("/start", (req, res) => {
+  app.post(`${basePath}/start`, (req, res) => {
     handlers.start(req.body);
     res.send("ok");
   });
 
-  app.post("/move", (req, res) => {
+  app.post(`${basePath}/move`, (req, res) => {
     res.send(handlers.move(req.body));
   });
 
-  app.post("/end", (req, res) => {
+  app.post(`${basePath}/end`, (req, res) => {
     handlers.end(req.body);
     res.send("ok");
+  });
+}
+
+export default function runServer(handlers) {
+  const app = express();
+  app.use(express.json());
+
+  registerSnakeRoutes(app, "", handlers);
+  Object.entries(handlers.variants || {}).forEach(([basePath, variantHandlers]) => {
+    registerSnakeRoutes(app, basePath, variantHandlers);
   });
 
   app.use(function(req, res, next) {
