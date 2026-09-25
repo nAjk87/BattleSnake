@@ -69,6 +69,24 @@ function getBlockedPositions(gameState) {
   return blockedPositions;
 }
 
+function getDangerousHeadToHeadPositions(gameState) {
+  const dangerousPositions = new Set();
+  const myLength = gameState.you.length;
+
+  gameState.board.snakes.forEach(snake => {
+    if (snake.id === gameState.you.id || snake.length < myLength) {
+      return;
+    }
+
+    const opponentHead = snake.body[0];
+    getNeighbors(opponentHead).forEach(position => {
+      dangerousPositions.add(positionKey(position));
+    });
+  });
+
+  return dangerousPositions;
+}
+
 function distanceBetween(positionA, positionB) {
   return Math.abs(positionA.x - positionB.x) + Math.abs(positionA.y - positionB.y);
 }
@@ -81,6 +99,135 @@ function distanceToClosestFood(position, food) {
   return Math.min(...food.map(foodPosition => {
     return distanceBetween(position, foodPosition);
   }));
+}
+
+function shortestPathDistance(startPosition, targetPosition, boardWidth, boardHeight, blockedPositions) {
+  if (!isInBounds(startPosition, boardWidth, boardHeight)
+    || !isInBounds(targetPosition, boardWidth, boardHeight)) {
+    return Infinity;
+  }
+
+  const targetKey = positionKey(targetPosition);
+  const visited = new Set([positionKey(startPosition)]);
+  const queue = [{ position: startPosition, distance: 0 }];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    if (positionKey(current.position) === targetKey) {
+      return current.distance;
+    }
+
+    getNeighbors(current.position).forEach(neighbor => {
+      const key = positionKey(neighbor);
+
+      if (!isInBounds(neighbor, boardWidth, boardHeight)) {
+        return;
+      }
+      if (visited.has(key) || blockedPositions.has(key)) {
+        return;
+      }
+
+      visited.add(key);
+      queue.push({ position: neighbor, distance: current.distance + 1 });
+    });
+  }
+
+  return Infinity;
+}
+
+function countOpenNeighbors(position, boardWidth, boardHeight, blockedPositions) {
+  return getNeighbors(position).filter(neighbor => {
+    return isInBounds(neighbor, boardWidth, boardHeight)
+      && !blockedPositions.has(positionKey(neighbor));
+  }).length;
+}
+
+function corridorPenalty(startPosition, boardWidth, boardHeight, blockedPositions) {
+  if (!isInBounds(startPosition, boardWidth, boardHeight)
+    || blockedPositions.has(positionKey(startPosition))) {
+    return 100;
+  }
+
+  const lookaheadDepth = 4;
+  const visited = new Set([positionKey(startPosition)]);
+  const queue = [{ position: startPosition, distance: 0 }];
+  let penalty = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const openNeighbors = countOpenNeighbors(
+      current.position,
+      boardWidth,
+      boardHeight,
+      blockedPositions
+    );
+
+    if (openNeighbors <= 1) {
+      penalty += (lookaheadDepth - current.distance + 1) * 4;
+    } else if (openNeighbors === 2) {
+      penalty += (lookaheadDepth - current.distance + 1);
+    }
+
+    if (current.distance >= lookaheadDepth) {
+      continue;
+    }
+
+    getNeighbors(current.position).forEach(neighbor => {
+      const key = positionKey(neighbor);
+
+      if (!isInBounds(neighbor, boardWidth, boardHeight)) {
+        return;
+      }
+      if (visited.has(key) || blockedPositions.has(key)) {
+        return;
+      }
+
+      visited.add(key);
+      queue.push({ position: neighbor, distance: current.distance + 1 });
+    });
+  }
+
+  return penalty;
+}
+
+function findBestFoodWeCanReachFirst(gameState, boardWidth, boardHeight, blockedPositions) {
+  const myHead = gameState.you.body[0];
+  const opponents = gameState.board.snakes.filter(snake => snake.id !== gameState.you.id);
+  const reachableFirstFoods = gameState.board.food.map(foodPosition => {
+    const myDistance = shortestPathDistance(
+      myHead,
+      foodPosition,
+      boardWidth,
+      boardHeight,
+      blockedPositions
+    );
+    const closestOpponentDistance = Math.min(...opponents.map(opponent => {
+      return shortestPathDistance(
+        opponent.body[0],
+        foodPosition,
+        boardWidth,
+        boardHeight,
+        blockedPositions
+      );
+    }));
+
+    return {
+      position: foodPosition,
+      myDistance: myDistance,
+      closestOpponentDistance: closestOpponentDistance
+    };
+  }).filter(foodOption => {
+    return Number.isFinite(foodOption.myDistance)
+      && foodOption.myDistance < foodOption.closestOpponentDistance;
+  });
+
+  if (reachableFirstFoods.length === 0) {
+    return null;
+  }
+
+  reachableFirstFoods.sort((foodA, foodB) => foodA.myDistance - foodB.myDistance);
+  return reachableFirstFoods[0];
 }
 
 function floodFillArea(startPosition, boardWidth, boardHeight, blockedPositions) {
@@ -170,12 +317,14 @@ function move(gameState) {
     right: { x: myHead.x + 1, y: myHead.y }
   };
   const blockedPositions = getBlockedPositions(gameState);
+  const dangerousHeadToHeadPositions = getDangerousHeadToHeadPositions(gameState);
 
-  // Prevent your Battlesnake from colliding with itself or other Battlesnakes
+  // Prevent your Battlesnake from colliding with itself, other Battlesnakes, or risky heads.
   Object.keys(possibleMoves).forEach(move => {
     const nextPosition = possibleMoves[move];
+    const nextPositionKey = positionKey(nextPosition);
 
-    if (blockedPositions.has(positionKey(nextPosition))) {
+    if (blockedPositions.has(nextPositionKey) || dangerousHeadToHeadPositions.has(nextPositionKey)) {
       isMoveSafe[move] = false;
     }
   });
@@ -188,26 +337,71 @@ function move(gameState) {
   }
 
   const moveScores = {};
+  const areaScores = {};
+  const corridorPenalties = {};
   safeMoves.forEach(move => {
-    moveScores[move] = floodFillArea(
+    areaScores[move] = floodFillArea(
       possibleMoves[move],
       boardWidth,
       boardHeight,
       blockedPositions
     );
+    corridorPenalties[move] = corridorPenalty(
+      possibleMoves[move],
+      boardWidth,
+      boardHeight,
+      blockedPositions
+    );
+    moveScores[move] = areaScores[move] - corridorPenalties[move];
   });
 
   const bestScore = Math.max(...Object.values(moveScores));
   const food = gameState.board.food;
+  const isHungry = gameState.you.health < 15;
+  const bestHungryFood = isHungry
+    ? findBestFoodWeCanReachFirst(gameState, boardWidth, boardHeight, blockedPositions)
+    : null;
+
+  if (bestHungryFood !== null) {
+    const hungryMoves = safeMoves.map(move => {
+      return {
+        move: move,
+        distance: shortestPathDistance(
+          possibleMoves[move],
+          bestHungryFood.position,
+          boardWidth,
+          boardHeight,
+          blockedPositions
+        ),
+        area: areaScores[move]
+      };
+    }).filter(moveOption => Number.isFinite(moveOption.distance));
+
+    if (hungryMoves.length > 0) {
+      hungryMoves.sort((moveA, moveB) => {
+        if (moveA.distance !== moveB.distance) {
+          return moveA.distance - moveB.distance;
+        }
+
+        return moveB.area - moveA.area;
+      });
+
+      const nextMove = hungryMoves[0].move;
+      console.log(`MOVE ${gameState.turn}: ${nextMove} (hungry, food: ${positionKey(bestHungryFood.position)}, distance: ${bestHungryFood.myDistance})`)
+      return { move: nextMove };
+    }
+  }
+
   const closestFoodDistance = distanceToClosestFood(myHead, food);
   const isFoodNearby = closestFoodDistance <= 3;
   const minimumComfortableArea = Math.max(gameState.you.length + 2, bestScore * 0.6);
   const foodMoves = safeMoves.filter(move => {
     const nextPosition = possibleMoves[move];
     const moveGetsCloserToFood = distanceToClosestFood(nextPosition, food) < closestFoodDistance;
-    const hasEnoughRoomAfterMove = moveScores[move] >= minimumComfortableArea;
+    const hasEnoughRoomAfterMove = areaScores[move] >= minimumComfortableArea;
+    const isNotTooNarrow = corridorPenalties[move] <= 8;
 
-    return isFoodNearby && moveGetsCloserToFood && hasEnoughRoomAfterMove;
+    return isFoodNearby && moveGetsCloserToFood && hasEnoughRoomAfterMove && isNotTooNarrow;
   });
 
   const candidateMoves = foodMoves.length > 0
@@ -216,7 +410,7 @@ function move(gameState) {
   const nextMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
 
   // TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
-  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)}, foodMoves: ${JSON.stringify(foodMoves)})`)
+  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)}, area: ${JSON.stringify(areaScores)}, corridor: ${JSON.stringify(corridorPenalties)}, foodMoves: ${JSON.stringify(foodMoves)})`)
   return { move: nextMove };
 }
 
