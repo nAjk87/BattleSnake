@@ -37,10 +37,76 @@ function end(gameState) {
   console.log("GAME OVER\n");
 }
 
+function positionKey(position) {
+  return `${position.x},${position.y}`;
+}
+
+function isInBounds(position, boardWidth, boardHeight) {
+  return position.x >= 0
+    && position.x < boardWidth
+    && position.y >= 0
+    && position.y < boardHeight;
+}
+
+function getNeighbors(position) {
+  return [
+    { x: position.x, y: position.y + 1 },
+    { x: position.x, y: position.y - 1 },
+    { x: position.x - 1, y: position.y },
+    { x: position.x + 1, y: position.y }
+  ];
+}
+
+function getBlockedPositions(gameState) {
+  const blockedPositions = new Set();
+
+  gameState.board.snakes.forEach(snake => {
+    snake.body.forEach(bodyPart => {
+      blockedPositions.add(positionKey(bodyPart));
+    });
+  });
+
+  return blockedPositions;
+}
+
+function floodFillArea(startPosition, boardWidth, boardHeight, blockedPositions) {
+  if (!isInBounds(startPosition, boardWidth, boardHeight)) {
+    return 0;
+  }
+  if (blockedPositions.has(positionKey(startPosition))) {
+    return 0;
+  }
+
+  const visited = new Set([positionKey(startPosition)]);
+  const queue = [startPosition];
+
+  while (queue.length > 0) {
+    const currentPosition = queue.shift();
+
+    getNeighbors(currentPosition).forEach(neighbor => {
+      const key = positionKey(neighbor);
+
+      if (!isInBounds(neighbor, boardWidth, boardHeight)) {
+        return;
+      }
+      if (blockedPositions.has(key) || visited.has(key)) {
+        return;
+      }
+
+      visited.add(key);
+      queue.push(neighbor);
+    });
+  }
+
+  return visited.size;
+}
+
 // move is called on every turn and returns your next move
 // Valid moves are "up", "down", "left", or "right"
 // See https://docs.battlesnake.com/api/example-move for available data
 function move(gameState) {
+  console.log("GAME STATE:");
+  console.log(JSON.stringify(gameState, null, 2));
 
   let isMoveSafe = {
     up: true,
@@ -66,15 +132,39 @@ function move(gameState) {
     isMoveSafe.up = false;
   }
 
-  // TODO: Step 1 - Prevent your Battlesnake from moving out of bounds
-  // boardWidth = gameState.board.width;
-  // boardHeight = gameState.board.height;
+  // Prevent your Battlesnake from moving out of bounds
+  const boardWidth = gameState.board.width;
+  const boardHeight = gameState.board.height;
 
-  // TODO: Step 2 - Prevent your Battlesnake from colliding with itself
-  // myBody = gameState.you.body;
+  if (myHead.x === 0) {
+    isMoveSafe.left = false;
+  }
+  if (myHead.x === boardWidth - 1) {
+    isMoveSafe.right = false;
+  }
+  if (myHead.y === 0) {
+    isMoveSafe.down = false;
+  }
+  if (myHead.y === boardHeight - 1) {
+    isMoveSafe.up = false;
+  }
 
-  // TODO: Step 3 - Prevent your Battlesnake from colliding with other Battlesnakes
-  // opponents = gameState.board.snakes;
+  const possibleMoves = {
+    up: { x: myHead.x, y: myHead.y + 1 },
+    down: { x: myHead.x, y: myHead.y - 1 },
+    left: { x: myHead.x - 1, y: myHead.y },
+    right: { x: myHead.x + 1, y: myHead.y }
+  };
+  const blockedPositions = getBlockedPositions(gameState);
+
+  // Prevent your Battlesnake from colliding with itself or other Battlesnakes
+  Object.keys(possibleMoves).forEach(move => {
+    const nextPosition = possibleMoves[move];
+
+    if (blockedPositions.has(positionKey(nextPosition))) {
+      isMoveSafe[move] = false;
+    }
+  });
 
   // Are there any safe moves left?
   const safeMoves = Object.keys(isMoveSafe).filter(key => isMoveSafe[key]);
@@ -83,13 +173,24 @@ function move(gameState) {
     return { move: "down" };
   }
 
-  // Choose a random move from the safe moves
-  const nextMove = safeMoves[Math.floor(Math.random() * safeMoves.length)];
+  const moveScores = {};
+  safeMoves.forEach(move => {
+    moveScores[move] = floodFillArea(
+      possibleMoves[move],
+      boardWidth,
+      boardHeight,
+      blockedPositions
+    );
+  });
+
+  const bestScore = Math.max(...Object.values(moveScores));
+  const bestMoves = safeMoves.filter(move => moveScores[move] === bestScore);
+  const nextMove = bestMoves[Math.floor(Math.random() * bestMoves.length)];
 
   // TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
   // food = gameState.board.food;
 
-  console.log(`MOVE ${gameState.turn}: ${nextMove}`)
+  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)})`)
   return { move: nextMove };
 }
 

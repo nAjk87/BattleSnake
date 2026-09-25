@@ -26,6 +26,12 @@ Start your Battlesnake
 npm run start
 ```
 
+Start your Battlesnake with automatic restarts while developing
+
+```sh
+npm run dev
+```
+
 You should see the following output once it is running
 
 ```sh
