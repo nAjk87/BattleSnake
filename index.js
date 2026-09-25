@@ -69,6 +69,20 @@ function getBlockedPositions(gameState) {
   return blockedPositions;
 }
 
+function distanceBetween(positionA, positionB) {
+  return Math.abs(positionA.x - positionB.x) + Math.abs(positionA.y - positionB.y);
+}
+
+function distanceToClosestFood(position, food) {
+  if (food.length === 0) {
+    return Infinity;
+  }
+
+  return Math.min(...food.map(foodPosition => {
+    return distanceBetween(position, foodPosition);
+  }));
+}
+
 function floodFillArea(startPosition, boardWidth, boardHeight, blockedPositions) {
   if (!isInBounds(startPosition, boardWidth, boardHeight)) {
     return 0;
@@ -184,13 +198,25 @@ function move(gameState) {
   });
 
   const bestScore = Math.max(...Object.values(moveScores));
-  const bestMoves = safeMoves.filter(move => moveScores[move] === bestScore);
-  const nextMove = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  const food = gameState.board.food;
+  const closestFoodDistance = distanceToClosestFood(myHead, food);
+  const isFoodNearby = closestFoodDistance <= 3;
+  const minimumComfortableArea = Math.max(gameState.you.length + 2, bestScore * 0.6);
+  const foodMoves = safeMoves.filter(move => {
+    const nextPosition = possibleMoves[move];
+    const moveGetsCloserToFood = distanceToClosestFood(nextPosition, food) < closestFoodDistance;
+    const hasEnoughRoomAfterMove = moveScores[move] >= minimumComfortableArea;
+
+    return isFoodNearby && moveGetsCloserToFood && hasEnoughRoomAfterMove;
+  });
+
+  const candidateMoves = foodMoves.length > 0
+    ? foodMoves
+    : safeMoves.filter(move => moveScores[move] === bestScore);
+  const nextMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
 
   // TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
-  // food = gameState.board.food;
-
-  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)})`)
+  console.log(`MOVE ${gameState.turn}: ${nextMove} (${JSON.stringify(moveScores)}, foodMoves: ${JSON.stringify(foodMoves)})`)
   return { move: nextMove };
 }
 
